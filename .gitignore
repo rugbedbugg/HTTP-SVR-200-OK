@@ -3,3 +3,6 @@
 
 **/objects/*
 **/bin/*
+
+# final binary
+/server
