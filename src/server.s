@@ -98,6 +98,7 @@ WRITE:	// Send HTTP 200 response to client socket
 	mov		rdx, 	RESP_200_LEN	# Response length
 	mov 		rax, 	1		# sys_write
 	syscall
+	jmp		ACCEPT			# loop forever: accept next connection
 
 #===============================================#
 #		CLOSE CALL (6)			#
