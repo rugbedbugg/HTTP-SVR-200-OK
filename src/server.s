@@ -19,7 +19,16 @@ RESP_200:
 	.ascii	"OK\n"
 RESP_200_END:
 #==================
-# 2. Status 404: Not Found
+# 2. Status 400: Bad Request
+RESP_400:
+	.ascii	"HTTP/1.1 400 Bad Request\r\n"
+	.ascii	"Content-Length: 12\r\n"
+	.ascii	"Connection: close\r\n"
+	.ascii	"\r\n"
+	.ascii	"Bad Request\n"
+RESP_400_END:
+#==================
+# 3. Status 404: Not Found
 RESP_404:
 	.ascii	"HTTP/1.1 404 Not Found\r\n"
 	.ascii	"Content-Length: 10\r\n"
@@ -28,7 +37,7 @@ RESP_404:
 	.ascii	"Not Found\n"
 RESP_404_END:
 #==================
-# 3. Status 405: Method Not Allowed
+# 4. Status 405: Method Not Allowed
 RESP_405:
 	.ascii	"HTTP/1.1 405 Method Not Allowed\r\n"
 	.ascii	"Content-Length: 19\r\n"
@@ -37,7 +46,7 @@ RESP_405:
 	.ascii	"Method Not Allowed\n"
 RESP_405_END:
 #==================
-# 4. Status 501: Not implemented
+# 5. Status 501: Not implemented
 RESP_501:
 	.ascii	"HTTP/1.1 501 Not Implemented\r\n"
 	.ascii	"Content-Length: 5\r\n"
@@ -58,6 +67,7 @@ PATH_LOGOUT:	.ascii	"/logout"
 ### Calculate & store endpoint path length
 #==================
 .set 	RESP_200_LEN,	RESP_200_END - RESP_200
+.set 	RESP_400_LEN,	RESP_400_END - RESP_400
 .set 	RESP_404_LEN,	RESP_404_END - RESP_404
 .set 	RESP_405_LEN,	RESP_405_END - RESP_405
 .set 	RESP_501_LEN,	RESP_501_END - RESP_501
@@ -185,6 +195,18 @@ POST_CHECK:
 
 
 #===============================================#
+#	  HTTP Header Boundary Parsing		#
+#===============================================#
+HDR_BOUNDARY: // find "\r\n\r\n" delimiter in current request buffer
+	lea		rdi,	[rip+REQ_BUF]	# request buffer ptr
+	mov		rsi,	rax		# bytes_read from READ_REQ
+	call		FIND_HDR_END
+	cmp		rax,	0
+	jl		RESP_BAD_REQUEST		# malformed/incomplete header => 400
+	lea		r10,	[rdi+rax]		# r10 points to first byte after "\r\n\r\n"
+
+
+#===============================================#
 #		   Routing			#
 #===============================================#
 ROUTE:
@@ -236,6 +258,12 @@ RESP_OK:					// What to response if HTTP request is good
 	mov		rdx,	RESP_200_LEN
 	jmp		WRITE
 
+RESP_BAD_REQUEST:				// What to respond if request format is malformed
+	mov		rdi,	r13
+	lea		rsi,	[rip+RESP_400]
+	mov		rdx,	RESP_400_LEN
+	jmp		WRITE
+
 RESP_NOT_FOUND:					// What to respond if HTTP request method is invalid
 	mov		rdi,	r13
 	lea		rsi,	[rip+RESP_404]
@@ -280,7 +308,40 @@ EXIT:	// Server exit syscall
 #===============================================#
 #		     HELPERS			#
 #===============================================#
-# PATH_EQ_SPACE(path_ptr=rdi, literal_ptr=rsi, len=rdx)
+# 1. FIND_HDR_END(buf_ptr=rdi, bytes_read=rsi)
+#
+# Scans request bytes for "\r\n\r\n" and returns offset to body start
+# Returns: rax = offset after boundary OR -1 if not found
+FIND_HDR_END:
+	xor		rcx,	rcx
+.FHE_LOOP:
+	cmp		rcx,	rsi
+	jge		.FHE_FAIL
+	cmp		rcx,	rsi
+	jae		.FHE_FAIL
+	cmp byte ptr [rdi+rcx], 13
+	jne		.FHE_NEXT
+	lea		r8,	[rcx+3]
+	cmp		r8,	rsi
+	jae		.FHE_FAIL
+	cmp byte ptr [rdi+rcx+1], 10
+	jne		.FHE_NEXT
+	cmp byte ptr [rdi+rcx+2], 13
+	jne		.FHE_NEXT
+	cmp byte ptr [rdi+rcx+3], 10
+	jne		.FHE_NEXT
+	lea		rax,	[rcx+4]
+	ret
+
+.FHE_NEXT:
+	inc		rcx
+	jmp		.FHE_LOOP
+
+.FHE_FAIL:
+	mov		rax,	-1
+	ret
+
+# 2. PATH_EQ_SPACE(path_ptr=rdi, literal_ptr=rsi, len=rdx)
 #
 # Checks whether the request path starts with a specific character 
 # and that it is immediately followed by a space
