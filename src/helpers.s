@@ -6,9 +6,16 @@
 .global	PATH_EQ_SPACE
 .global	FORM_HAS_VALUE
 .global	FORM_VALUE_EQ
+.global	HEX_ENCODE
+.global	EXTRACT_COOKIE_TOKEN
 
 .section .rodata
 CONTENT_LENGTH_KEY:	.ascii	"Content-Length:"
+HEX_DIGITS:		.ascii	"0123456789abcdef"
+COOKIE_KEY:		.ascii	"Cookie:"
+SESSION_KEY:		.ascii	"session="
+.set	COOKIE_KEY_LEN,		7
+.set	SESSION_KEY_LEN,	8
 
 .section .bss
 #===============================================#
@@ -290,5 +297,152 @@ FORM_VALUE_EQ:
 	jmp		.FVE_SCAN
 
 .FVE_NO:
+	xor		rax,	rax
+	ret
+
+# 6. HEX_ENCODE(src_ptr=rdi, src_len=rsi, dst_ptr=rdx)
+#
+# Encodes src_len raw bytes into 2*src_len lowercase ASCII hex chars at dst_ptr
+# Returns: none (writes 2*src_len bytes to [dst_ptr])
+HEX_ENCODE:
+	lea		r8,	[rip+HEX_DIGITS]
+	xor		rcx,	rcx		# src byte index
+	xor		r9,	r9		# dst char index
+.HE_LOOP:
+	cmp		rcx,	rsi
+	jge		.HE_DONE
+	mov		al,	byte ptr [rdi+rcx]
+	mov		r10b,	al
+	shr		r10b,	4		# high nibble
+	movzx		r10,	r10b
+	mov		al,	byte ptr [r8+r10]
+	mov		byte ptr [rdx+r9],	al
+	inc		r9
+	mov		al,	byte ptr [rdi+rcx]
+	and		al,	0x0f		# low nibble
+	movzx		r10,	al
+	mov		al,	byte ptr [r8+r10]
+	mov		byte ptr [rdx+r9],	al
+	inc		r9
+	inc		rcx
+	jmp		.HE_LOOP
+
+.HE_DONE:
+	ret
+
+# 7. EXTRACT_COOKIE_TOKEN(req_start=rdi, hdr_end_ptr=rsi, out_ptr=rdx)
+#
+# Scans headers line by line for "Cookie:" (first match only). Within that
+# line, scans for "session=" and extracts its value, terminated by ';',
+# CR, LF, or end of headers. If the extracted value is exactly 32 bytes,
+# copies it to [out_ptr].
+# Returns: rax = 1 (32-byte token copied to [out_ptr]) OR 0 (no Cookie
+# header / no session= key / value length != 32)
+EXTRACT_COOKIE_TOKEN:
+	mov		r8,	rdi		# line-scan pointer
+.ECT_LINE_SCAN:
+	cmp		r8,	rsi
+	jae		.ECT_NOTFOUND
+
+	mov		r9,	rsi
+	sub		r9,	r8
+	cmp		r9,	COOKIE_KEY_LEN
+	jb		.ECT_NEXT_LINE
+
+	xor		rcx,	rcx
+	lea		rbx,	[rip+COOKIE_KEY]
+.ECT_KEYCMP:
+	cmp		rcx,	COOKIE_KEY_LEN
+	je		.ECT_LINE_FOUND
+	mov		al,	byte ptr [r8+rcx]
+	cmp		al,	byte ptr [rbx+rcx]
+	jne		.ECT_NEXT_LINE
+	inc		rcx
+	jmp		.ECT_KEYCMP
+
+.ECT_LINE_FOUND:
+	lea		r8,	[r8+COOKIE_KEY_LEN]
+.ECT_SKIP_SP:
+	cmp		r8,	rsi
+	jae		.ECT_NOTFOUND
+	cmp byte ptr	[r8],	' '
+	jne		.ECT_FIND_SESSION
+	inc		r8
+	jmp		.ECT_SKIP_SP
+
+.ECT_FIND_SESSION:
+	mov		r10,	r8		# session-key scan index
+.ECT_SESS_SCAN:
+	cmp		r10,	rsi
+	jae		.ECT_NOTFOUND
+	cmp byte ptr	[r10],	13
+	je		.ECT_NOTFOUND
+	cmp byte ptr	[r10],	10
+	je		.ECT_NOTFOUND
+
+	mov		r9,	rsi
+	sub		r9,	r10
+	cmp		r9,	SESSION_KEY_LEN
+	jb		.ECT_SESS_NEXT
+
+	xor		rcx,	rcx
+	lea		rbx,	[rip+SESSION_KEY]
+.ECT_SESS_KEYCMP:
+	cmp		rcx,	SESSION_KEY_LEN
+	je		.ECT_SESS_MATCH
+	mov		al,	byte ptr [r10+rcx]
+	cmp		al,	byte ptr [rbx+rcx]
+	jne		.ECT_SESS_NEXT
+	inc		rcx
+	jmp		.ECT_SESS_KEYCMP
+
+.ECT_SESS_NEXT:
+	inc		r10
+	jmp		.ECT_SESS_SCAN
+
+.ECT_SESS_MATCH:
+	lea		r10,	[r10+SESSION_KEY_LEN]	# value start
+	mov		r11,	r10			# value-end scan index
+.ECT_VAL_SCAN:
+	cmp		r11,	rsi
+	jae		.ECT_VAL_END
+	mov		al,	byte ptr [r11]
+	cmp		al,	';'
+	je		.ECT_VAL_END
+	cmp		al,	13
+	je		.ECT_VAL_END
+	cmp		al,	10
+	je		.ECT_VAL_END
+	inc		r11
+	jmp		.ECT_VAL_SCAN
+
+.ECT_VAL_END:
+	mov		r9,	r11
+	sub		r9,	r10			# value length
+	cmp		r9,	32
+	jne		.ECT_NOTFOUND
+
+	mov		rdi,	rdx			# out_ptr (original req_start is
+							# already dead - r8 holds the scan state)
+	mov		rsi,	r10
+	mov		rcx,	32
+	cld
+	rep		movsb
+	mov		rax,	1
+	ret
+
+.ECT_NEXT_LINE:
+.ECT_EOL:
+	cmp		r8,	rsi
+	jae		.ECT_NOTFOUND
+	cmp byte ptr	[r8],	10
+	je		.ECT_ADV
+	inc		r8
+	jmp		.ECT_EOL
+.ECT_ADV:
+	inc		r8
+	jmp		.ECT_LINE_SCAN
+
+.ECT_NOTFOUND:
 	xor		rax,	rax
 	ret

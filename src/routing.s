@@ -13,6 +13,14 @@
 .extern	RESP_NOT_IMPLEMENTED
 .extern	RESP_LOGIN_OK
 .extern	RESP_UNAUTHORIZED
+.extern	RESP_LOGOUT_OK
+.extern	RESP_SERVICE_UNAVAILABLE
+
+.extern	SESSION_CREATE
+.extern	SESSION_FIND
+.extern	SESSION_INVALIDATE
+.extern	EXTRACT_COOKIE_TOKEN
+.extern	LOGOUT_TOKEN_SCRATCH
 
 .extern	REQ_BUF
 .extern	REQ_BYTES
@@ -133,6 +141,10 @@ CHECK_LOGIN:
 	cmp		rax,	1
 	jne		RESP_UNAUTHORIZED
 
+	# password matched - issue a new session before responding
+	call		SESSION_CREATE
+	cmp		rax,	0
+	je		RESP_SERVICE_UNAVAILABLE	# session table full
 	jmp		RESP_LOGIN_OK
 
 CHECK_FILES:
@@ -151,4 +163,26 @@ CHECK_LOGOUT:
 	call		PATH_EQ_SPACE
 	cmp		rax,	1
 	jne		RESP_NOT_FOUND
-	jmp		RESP_NOT_IMPLEMENTED
+	cmp		r15,	2
+	jne		RESP_METHOD_NOT_ALLOWED	# /logout currently supports POST only
+
+	# extract session token from the Cookie header
+	lea		rdi,	[rip+REQ_BUF]
+	mov		rsi,	r10		# header-end ptr, still valid here
+	lea		rdx,	[rip+LOGOUT_TOKEN_SCRATCH]
+	call		EXTRACT_COOKIE_TOKEN
+	cmp		rax,	1
+	jne		RESP_UNAUTHORIZED		# no Cookie header / no session= / wrong length
+
+	# look up token in the session table
+	lea		rdi,	[rip+LOGOUT_TOKEN_SCRATCH]
+	mov		rsi,	32
+	call		SESSION_FIND
+	cmp		rax,	0
+	je		RESP_UNAUTHORIZED		# token not recognized / already invalidated
+
+	# rax = matching slot pointer; invalidate it
+	mov		rdi,	rax
+	call		SESSION_INVALIDATE
+
+	jmp		RESP_LOGOUT_OK

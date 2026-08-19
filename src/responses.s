@@ -7,8 +7,17 @@
 .global	RESP_NOT_IMPLEMENTED
 .global	RESP_LOGIN_OK
 .global	RESP_UNAUTHORIZED
+.global	RESP_LOGOUT_OK
+.global	RESP_SERVICE_UNAVAILABLE
 
 .extern	ACCEPT
+.extern	TOKEN_SCRATCH
+
+.section .bss
+#===============================================#
+#	  Dynamic Response Buffer (.bss)	#
+#===============================================#
+	.lcomm	RESP_LOGIN_BUF, 256
 
 .section .rodata
 ### HTTP Status Codes
@@ -75,6 +84,37 @@ RESP_401:
 	.ascii	"\r\n"
 	.ascii	"Invalid credentials\n"
 RESP_401_END:
+#==================
+# 8. Status 503: Service Unavailable
+RESP_503:
+	.ascii	"HTTP/1.1 503 Service Unavailable\r\n"
+	.ascii	"Content-Length: 22\r\n"
+	.ascii	"Connection: close\r\n"
+	.ascii	"\r\n"
+	.ascii	"No sessions available\n"
+RESP_503_END:
+#==================
+# 9. Status 200: Logout OK
+RESP_200_LOGOUT:
+	.ascii	"HTTP/1.1 200 OK\r\n"
+	.ascii	"Content-Length: 18\r\n"
+	.ascii	"Connection: close\r\n"
+	.ascii	"\r\n"
+	.ascii	"Logout successful\n"
+RESP_200_LOGOUT_END:
+#==================
+# Dynamic /login response: static prefix + 32-byte token + static suffix
+RESP_LOGIN_PREFIX:
+	.ascii	"HTTP/1.1 200 OK\r\n"
+	.ascii	"Content-Length: 17\r\n"
+	.ascii	"Set-Cookie: session="
+RESP_LOGIN_PREFIX_END:
+RESP_LOGIN_SUFFIX:
+	.ascii	"\r\n"
+	.ascii	"Connection: close\r\n"
+	.ascii	"\r\n"
+	.ascii	"Login successful\n"
+RESP_LOGIN_SUFFIX_END:
 ###################
 
 .set 	RESP_200_LEN,	RESP_200_END - RESP_200
@@ -84,6 +124,12 @@ RESP_401_END:
 .set 	RESP_501_LEN,	RESP_501_END - RESP_501
 .set 	RESP_200_LOGIN_LEN,	RESP_200_LOGIN_END - RESP_200_LOGIN
 .set 	RESP_401_LEN,	RESP_401_END - RESP_401
+.set 	RESP_503_LEN,	RESP_503_END - RESP_503
+.set 	RESP_200_LOGOUT_LEN,	RESP_200_LOGOUT_END - RESP_200_LOGOUT
+.set	RESP_LOGIN_PREFIX_LEN,	RESP_LOGIN_PREFIX_END - RESP_LOGIN_PREFIX
+.set	RESP_LOGIN_SUFFIX_LEN,	RESP_LOGIN_SUFFIX_END - RESP_LOGIN_SUFFIX
+.set	RESP_LOGIN_TOKEN_LEN,	32
+.set	RESP_LOGIN_DYNAMIC_LEN,	RESP_LOGIN_PREFIX_LEN + RESP_LOGIN_TOKEN_LEN + RESP_LOGIN_SUFFIX_LEN
 
 .section .text
 #===============================================#
@@ -120,15 +166,42 @@ RESP_NOT_IMPLEMENTED:				// What is respond if HTTP request method hasnt been im
 	jmp		WRITE
 
 RESP_LOGIN_OK:					// What to respond if /login credentials are valid
+	# assemble dynamic response: static prefix + 32-char token + static suffix
+	lea		rdi,	[rip+RESP_LOGIN_BUF]
+	lea		rsi,	[rip+RESP_LOGIN_PREFIX]
+	mov		rcx,	RESP_LOGIN_PREFIX_LEN
+	cld
+	rep		movsb			# advances rdi past prefix
+
+	lea		rsi,	[rip+TOKEN_SCRATCH]
+	mov		rcx,	32
+	rep		movsb			# advances rdi past token
+
+	lea		rsi,	[rip+RESP_LOGIN_SUFFIX]
+	mov		rcx,	RESP_LOGIN_SUFFIX_LEN
+	rep		movsb
+
 	mov		rdi,	r13
-	lea		rsi,	[rip+RESP_200_LOGIN]
-	mov		rdx,	RESP_200_LOGIN_LEN
+	lea		rsi,	[rip+RESP_LOGIN_BUF]
+	mov		rdx,	RESP_LOGIN_DYNAMIC_LEN
 	jmp		WRITE
 
 RESP_UNAUTHORIZED:				// What to respond if /login credentials are invalid
 	mov		rdi,	r13
 	lea		rsi,	[rip+RESP_401]
 	mov		rdx,	RESP_401_LEN
+	jmp		WRITE
+
+RESP_LOGOUT_OK:					// What to respond if /logout successfully invalidated a session
+	mov		rdi,	r13
+	lea		rsi,	[rip+RESP_200_LOGOUT]
+	mov		rdx,	RESP_200_LOGOUT_LEN
+	jmp		WRITE
+
+RESP_SERVICE_UNAVAILABLE:			// What to respond if the session table is full on /login
+	mov		rdi,	r13
+	lea		rsi,	[rip+RESP_503]
+	mov		rdx,	RESP_503_LEN
 
 WRITE:	// write(client_fd, response, response_len)
 	mov 		rax,	1		# sys_write
