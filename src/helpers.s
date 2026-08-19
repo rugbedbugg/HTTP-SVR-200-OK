@@ -5,6 +5,7 @@
 .global	PARSE_CONTENT_LENGTH
 .global	PATH_EQ_SPACE
 .global	FORM_HAS_VALUE
+.global	FORM_VALUE_EQ
 
 .section .rodata
 CONTENT_LENGTH_KEY:	.ascii	"Content-Length:"
@@ -136,7 +137,7 @@ PARSE_CONTENT_LENGTH:
 	ret
 
 
-# 4. FORM_HAS_VALUE(body_ptr=rdi, body_len=rsi, key_ptr=rdx, key_len=rcx)
+# 3. FORM_HAS_VALUE(body_ptr=rdi, body_len=rsi, key_ptr=rdx, key_len=rcx)
 #
 # Finds key pattern in form body and verifies there is at least one value byte
 # Returns: rax = 1 (found with non-empty value) OR 0 (missing/empty)
@@ -188,7 +189,7 @@ FORM_HAS_VALUE:
 	xor		rax,	rax
 	ret
 
-# 5. PATH_EQ_SPACE(path_ptr=rdi, literal_ptr=rsi, len=rdx)
+# 4. PATH_EQ_SPACE(path_ptr=rdi, literal_ptr=rsi, len=rdx)
 #
 # Checks whether the request path starts with a specific character
 # and that it is immediately followed by a space
@@ -213,5 +214,81 @@ PATH_EQ_SPACE:
 	ret
 
 .PEQ_NO:
+	xor		rax,	rax
+	ret
+
+# 5. FORM_VALUE_EQ(body_ptr=rdi, body_len=rsi, key_ptr=rdx, key_len=rcx, expected_ptr=r8, expected_len=r9)
+#
+# Finds key in form body, extracts its value (terminated by '&', CR, LF, or end of body),
+# and checks it exactly matches the expected value
+# Returns: rax = 1 (match) OR 0 (no match / key missing)
+FORM_VALUE_EQ:
+	xor		r10,	r10		# start index in body
+.FVE_SCAN:
+	cmp		r10,	rsi
+	jae		.FVE_NO
+
+	# ensure enough remaining bytes for key comparison
+	mov		rbx,	rsi
+	sub		rbx,	r10
+	cmp		rbx,	rcx
+	jb		.FVE_NO
+
+	# compare key bytes from body[r10 + i] with key[i]
+	xor		r11,	r11
+.FVE_KEYCMP:
+	cmp		r11,	rcx
+	je		.FVE_KEY_MATCH
+	lea		rax,	[rdi+r10]
+	mov		bl,	byte ptr [rax+r11]
+	cmp		bl,	byte ptr [rdx+r11]
+	jne		.FVE_NEXT
+	inc		r11
+	jmp		.FVE_KEYCMP
+
+.FVE_KEY_MATCH:
+	# value starts right after the key; scan forward for its end
+	lea		r10,	[r10+rcx]	# r10 = value start index
+	mov		rbx,	r10		# rbx = scan index
+.FVE_VALSCAN:
+	cmp		rbx,	rsi
+	jae		.FVE_VALEND
+	mov		al,	byte ptr [rdi+rbx]
+	cmp		al,	'&'
+	je		.FVE_VALEND
+	cmp		al,	13
+	je		.FVE_VALEND
+	cmp		al,	10
+	je		.FVE_VALEND
+	inc		rbx
+	jmp		.FVE_VALSCAN
+
+.FVE_VALEND:
+	# rbx = value end index, r10 = value start index
+	sub		rbx,	r10		# rbx = value length
+	cmp		rbx,	r9		# compare against expected_len
+	jne		.FVE_NO
+
+	# byte-for-byte compare value against expected
+	xor		r11,	r11
+.FVE_VALCMP:
+	cmp		r11,	r9
+	je		.FVE_YES
+	lea		rax,	[rdi+r10]
+	mov		al,	byte ptr [rax+r11]
+	cmp		al,	byte ptr [r8+r11]
+	jne		.FVE_NO
+	inc		r11
+	jmp		.FVE_VALCMP
+
+.FVE_YES:
+	mov		rax,	1
+	ret
+
+.FVE_NEXT:
+	inc		r10
+	jmp		.FVE_SCAN
+
+.FVE_NO:
 	xor		rax,	rax
 	ret

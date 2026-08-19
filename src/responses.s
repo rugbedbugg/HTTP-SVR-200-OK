@@ -5,6 +5,8 @@
 .global	RESP_NOT_FOUND
 .global	RESP_METHOD_NOT_ALLOWED
 .global	RESP_NOT_IMPLEMENTED
+.global	RESP_LOGIN_OK
+.global	RESP_UNAUTHORIZED
 
 .extern	ACCEPT
 
@@ -32,10 +34,10 @@ RESP_400_END:
 # 3. Status 404: Not Found
 RESP_404:
 	.ascii	"HTTP/1.1 404 Not Found\r\n"
-	.ascii	"Content-Length: 10\r\n"
+	.ascii	"Content-Length: 41\r\n"
 	.ascii	"Connection: close\r\n"
 	.ascii	"\r\n"
-	.ascii	"Not Found\n"
+	.ascii	"Nope, doesn't exist. Try something else.\n"
 RESP_404_END:
 #==================
 # 4. Status 405: Method Not Allowed
@@ -55,6 +57,24 @@ RESP_501:
 	.ascii	"\r\n"
 	.ascii	"TODO\n"
 RESP_501_END:
+#==================
+# 6. Status 200: Login OK
+RESP_200_LOGIN:
+	.ascii	"HTTP/1.1 200 OK\r\n"
+	.ascii	"Content-Length: 17\r\n"
+	.ascii	"Connection: close\r\n"
+	.ascii	"\r\n"
+	.ascii	"Login successful\n"
+RESP_200_LOGIN_END:
+#==================
+# 7. Status 401: Unauthorized
+RESP_401:
+	.ascii	"HTTP/1.1 401 Unauthorized\r\n"
+	.ascii	"Content-Length: 20\r\n"
+	.ascii	"Connection: close\r\n"
+	.ascii	"\r\n"
+	.ascii	"Invalid credentials\n"
+RESP_401_END:
 ###################
 
 .set 	RESP_200_LEN,	RESP_200_END - RESP_200
@@ -62,6 +82,8 @@ RESP_501_END:
 .set 	RESP_404_LEN,	RESP_404_END - RESP_404
 .set 	RESP_405_LEN,	RESP_405_END - RESP_405
 .set 	RESP_501_LEN,	RESP_501_END - RESP_501
+.set 	RESP_200_LOGIN_LEN,	RESP_200_LOGIN_END - RESP_200_LOGIN
+.set 	RESP_401_LEN,	RESP_401_END - RESP_401
 
 .section .text
 #===============================================#
@@ -95,6 +117,18 @@ RESP_NOT_IMPLEMENTED:				// What is respond if HTTP request method hasnt been im
 	mov		rdi,	r13
 	lea		rsi,	[rip+RESP_501]
 	mov		rdx,	RESP_501_LEN
+	jmp		WRITE
+
+RESP_LOGIN_OK:					// What to respond if /login credentials are valid
+	mov		rdi,	r13
+	lea		rsi,	[rip+RESP_200_LOGIN]
+	mov		rdx,	RESP_200_LOGIN_LEN
+	jmp		WRITE
+
+RESP_UNAUTHORIZED:				// What to respond if /login credentials are invalid
+	mov		rdi,	r13
+	lea		rsi,	[rip+RESP_401]
+	mov		rdx,	RESP_401_LEN
 
 WRITE:	// write(client_fd, response, response_len)
 	mov 		rax,	1		# sys_write

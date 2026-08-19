@@ -4,12 +4,15 @@
 
 .extern	PATH_EQ_SPACE
 .extern	FORM_HAS_VALUE
+.extern	FORM_VALUE_EQ
 
 .extern	RESP_OK
 .extern	RESP_BAD_REQUEST
 .extern	RESP_NOT_FOUND
 .extern	RESP_METHOD_NOT_ALLOWED
 .extern	RESP_NOT_IMPLEMENTED
+.extern	RESP_LOGIN_OK
+.extern	RESP_UNAUTHORIZED
 
 .extern	REQ_BUF
 .extern	REQ_BYTES
@@ -23,6 +26,8 @@ PATH_FILES:	.ascii	"/files"
 PATH_LOGOUT:	.ascii	"/logout"
 FORM_USERNAME_KEY:	.ascii	"username="
 FORM_PASSWORD_KEY:	.ascii	"password="
+LOGIN_USER:	.ascii	"admin"
+LOGIN_PASS:	.ascii	"password123"
 ###################
 
 ### Endpoints' path lengths
@@ -33,6 +38,8 @@ FORM_PASSWORD_KEY:	.ascii	"password="
 .set 	PATH_LOGOUT_LEN,	7
 .set 	FORM_USERNAME_KEY_LEN,	9
 .set 	FORM_PASSWORD_KEY_LEN,	9
+.set 	LOGIN_USER_LEN,		5
+.set 	LOGIN_PASS_LEN,		11
 ###################
 
 .section .text
@@ -96,7 +103,37 @@ CHECK_LOGIN:
 	cmp		rax,	1
 	jne		RESP_BAD_REQUEST
 
-	jmp		RESP_NOT_IMPLEMENTED
+	# validate: username value matches configured credential
+	mov		rdi,	r10		# body_ptr
+	mov		rsi,	r11		# body_len (Content-Length)
+	lea		rdx,	[rip+FORM_USERNAME_KEY]
+	mov		rcx,	FORM_USERNAME_KEY_LEN
+	lea		r8,	[rip+LOGIN_USER]
+	mov		r9,	LOGIN_USER_LEN
+	push		r10		# preserve body_ptr across helper call
+	push		r11		# preserve Content-Length across helper call
+	call		FORM_VALUE_EQ
+	pop		r11
+	pop		r10
+	cmp		rax,	1
+	jne		RESP_UNAUTHORIZED
+
+	# validate: password value matches configured credential
+	mov		rdi,	r10		# body_ptr
+	mov		rsi,	r11		# body_len (Content-Length)
+	lea		rdx,	[rip+FORM_PASSWORD_KEY]
+	mov		rcx,	FORM_PASSWORD_KEY_LEN
+	lea		r8,	[rip+LOGIN_PASS]
+	mov		r9,	LOGIN_PASS_LEN
+	push		r10		# preserve body_ptr across helper call
+	push		r11		# preserve Content-Length across helper call
+	call		FORM_VALUE_EQ
+	pop		r11
+	pop		r10
+	cmp		rax,	1
+	jne		RESP_UNAUTHORIZED
+
+	jmp		RESP_LOGIN_OK
 
 CHECK_FILES:
 	mov		rdi,	r14
