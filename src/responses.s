@@ -9,6 +9,9 @@
 .global	RESP_UNAUTHORIZED
 .global	RESP_LOGOUT_OK
 .global	RESP_SERVICE_UNAVAILABLE
+.global	RESP_REGISTER_OK
+.global	RESP_USERNAME_TAKEN
+.global	RESP_USER_TABLE_FULL
 
 .extern	ACCEPT
 .extern	TOKEN_SCRATCH
@@ -115,6 +118,33 @@ RESP_LOGIN_SUFFIX:
 	.ascii	"\r\n"
 	.ascii	"Login successful\n"
 RESP_LOGIN_SUFFIX_END:
+#==================
+# 10. Status 201: Created
+RESP_201:
+	.ascii	"HTTP/1.1 201 Created\r\n"
+	.ascii	"Content-Length: 16\r\n"
+	.ascii	"Connection: close\r\n"
+	.ascii	"\r\n"
+	.ascii	"Account created\n"
+RESP_201_END:
+#==================
+# 11. Status 409: Conflict
+RESP_409:
+	.ascii	"HTTP/1.1 409 Conflict\r\n"
+	.ascii	"Content-Length: 24\r\n"
+	.ascii	"Connection: close\r\n"
+	.ascii	"\r\n"
+	.ascii	"Username already exists\n"
+RESP_409_END:
+#==================
+# 12. Status 503: Service Unavailable (user table full)
+RESP_503_USERS:
+	.ascii	"HTTP/1.1 503 Service Unavailable\r\n"
+	.ascii	"Content-Length: 22\r\n"
+	.ascii	"Connection: close\r\n"
+	.ascii	"\r\n"
+	.ascii	"No accounts available\n"
+RESP_503_USERS_END:
 ###################
 
 .set 	RESP_200_LEN,	RESP_200_END - RESP_200
@@ -130,6 +160,9 @@ RESP_LOGIN_SUFFIX_END:
 .set	RESP_LOGIN_SUFFIX_LEN,	RESP_LOGIN_SUFFIX_END - RESP_LOGIN_SUFFIX
 .set	RESP_LOGIN_TOKEN_LEN,	32
 .set	RESP_LOGIN_DYNAMIC_LEN,	RESP_LOGIN_PREFIX_LEN + RESP_LOGIN_TOKEN_LEN + RESP_LOGIN_SUFFIX_LEN
+.set	RESP_201_LEN,		RESP_201_END - RESP_201
+.set	RESP_409_LEN,		RESP_409_END - RESP_409
+.set	RESP_503_USERS_LEN,	RESP_503_USERS_END - RESP_503_USERS
 
 .section .text
 #===============================================#
@@ -202,6 +235,24 @@ RESP_SERVICE_UNAVAILABLE:			// What to respond if the session table is full on /
 	mov		rdi,	r13
 	lea		rsi,	[rip+RESP_503]
 	mov		rdx,	RESP_503_LEN
+	jmp		WRITE
+
+RESP_REGISTER_OK:				// What to respond if /register successfully created an account
+	mov		rdi,	r13
+	lea		rsi,	[rip+RESP_201]
+	mov		rdx,	RESP_201_LEN
+	jmp		WRITE
+
+RESP_USERNAME_TAKEN:				// What to respond if /register's username is already registered
+	mov		rdi,	r13
+	lea		rsi,	[rip+RESP_409]
+	mov		rdx,	RESP_409_LEN
+	jmp		WRITE
+
+RESP_USER_TABLE_FULL:				// What to respond if the user table is full on /register
+	mov		rdi,	r13
+	lea		rsi,	[rip+RESP_503_USERS]
+	mov		rdx,	RESP_503_USERS_LEN
 
 WRITE:	// write(client_fd, response, response_len)
 	mov 		rax,	1		# sys_write

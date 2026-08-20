@@ -8,6 +8,7 @@
 .global	FORM_VALUE_EQ
 .global	HEX_ENCODE
 .global	EXTRACT_COOKIE_TOKEN
+.global	FORM_EXTRACT_VALUE
 
 .section .rodata
 CONTENT_LENGTH_KEY:	.ascii	"Content-Length:"
@@ -445,4 +446,63 @@ EXTRACT_COOKIE_TOKEN:
 
 .ECT_NOTFOUND:
 	xor		rax,	rax
+	ret
+
+# 8. FORM_EXTRACT_VALUE(body_ptr=rdi, body_len=rsi, key_ptr=rdx, key_len=rcx)
+#
+# Finds key in form body and returns a pointer to its value (terminated by
+# '&', CR, LF, or end of body), without copying or comparing it. Unlike
+# FORM_HAS_VALUE/FORM_VALUE_EQ, this hands back the raw value so callers
+# can consume arbitrary-length submitted data (e.g. registration fields).
+# Returns: rax = value pointer (0 if key missing), rbx = value length
+FORM_EXTRACT_VALUE:
+	xor		r10,	r10		# start index in body
+.FEV_SCAN:
+	cmp		r10,	rsi
+	jae		.FEV_NO
+
+	mov		rbx,	rsi
+	sub		rbx,	r10
+	cmp		rbx,	rcx
+	jb		.FEV_NO
+
+	xor		r11,	r11
+.FEV_KEYCMP:
+	cmp		r11,	rcx
+	je		.FEV_KEY_MATCH
+	lea		rax,	[rdi+r10]
+	mov		bl,	byte ptr [rax+r11]
+	cmp		bl,	byte ptr [rdx+r11]
+	jne		.FEV_NEXT
+	inc		r11
+	jmp		.FEV_KEYCMP
+
+.FEV_KEY_MATCH:
+	lea		r10,	[r10+rcx]	# r10 = value start index
+	mov		rbx,	r10		# rbx = value-end scan index
+.FEV_VALSCAN:
+	cmp		rbx,	rsi
+	jae		.FEV_VALEND
+	mov		al,	byte ptr [rdi+rbx]
+	cmp		al,	'&'
+	je		.FEV_VALEND
+	cmp		al,	13
+	je		.FEV_VALEND
+	cmp		al,	10
+	je		.FEV_VALEND
+	inc		rbx
+	jmp		.FEV_VALSCAN
+
+.FEV_VALEND:
+	lea		rax,	[rdi+r10]	# rax = value pointer
+	sub		rbx,	r10		# rbx = value length
+	ret
+
+.FEV_NEXT:
+	inc		r10
+	jmp		.FEV_SCAN
+
+.FEV_NO:
+	xor		rax,	rax
+	xor		rbx,	rbx
 	ret
