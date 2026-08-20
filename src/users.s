@@ -3,19 +3,31 @@
 .global	USER_CREATE
 .global	USER_FIND
 
-.extern	SHA256_HASH
+.extern	SHA256_INIT
+.extern	SHA256_UPDATE
+.extern	SHA256_FINAL
 
 .section .bss
 #===============================================#
 #		  User Table (.bss)		#
 #===============================================#
-	.lcomm	USER_TABLE, 4096		# 64 slots x 64 bytes (32B username + 32B password hash)
+# Slot layout (96 bytes):
+#   [ 0..31] username  (zero-padded)
+#   [32..47] salt      (16 random bytes, generated at USER_CREATE time)
+#   [48..79] password hash (SHA-256 of salt || password)
+#   [80..95] reserved (zero)
+.global	USER_TABLE
+.balign	8
+USER_TABLE:
+	.zero	6144				# 64 slots x 96 bytes
 	.lcomm	USERNAME_SCRATCH, 32		# zero-padded username, used for table compares
 	.lcomm	PASSWORD_HASH_SCRATCH, 32	# computed hash, used for login password compares
+	.lcomm	SHA_CTX_SCRATCH, 128		# streaming SHA-256 context work area
 
-.set	USER_SLOT_LEN,		64
+.set	USER_SLOT_LEN,		96
 .set	USER_SLOT_COUNT,	64
 .set	USERNAME_MAX_LEN,	32
+.set	SALT_LEN,		16
 
 .section .text
 #===============================================#
@@ -25,10 +37,11 @@
 #
 # Zero-pads the username into USERNAME_SCRATCH, scans USER_TABLE for either
 # a duplicate username (fail) or the first free (all-zero-username) slot,
-# copies the username in, then hashes the password via SHA256_HASH directly
-# into the slot's hash field. Free slots only ever occur at the unused tail
-# (accounts are never deleted), so the first empty slot found also proves
-# no duplicate exists among the slots before it.
+# copies the username in, generates a fresh 16-byte salt via getrandom(2)
+# directly into the slot, then hashes salt || password via the streaming
+# SHA-256 API into the slot's hash field. Free slots only ever occur at the
+# unused tail (accounts are never deleted), so the first empty slot found
+# also proves no duplicate exists among the slots before it.
 # Returns: rax = 1 (created) OR 0 (duplicate username) OR 2 (table full)
 USER_CREATE:
 	cmp		rsi,	USERNAME_MAX_LEN
@@ -90,12 +103,33 @@ USER_CREATE:
 	cld
 	rep		movsb
 
+	# generate a fresh 16-byte salt directly into the slot's salt field
+	lea		rdi,	[rbx+32]
+	mov		rsi,	SALT_LEN
+	xor		rdx,	rdx			# flags = 0
+	mov		rax,	318			# sys_getrandom
+	syscall
+
 	pop		r11			# password_len
 	pop		r10			# password_ptr
-	mov		rdi,	r10
-	mov		rsi,	r11
-	lea		rdx,	[rbx+32]		# slot's password-hash field
-	call		SHA256_HASH
+
+	# hash salt || password into the slot's hash field
+	lea		rdi,	[rip+SHA_CTX_SCRATCH]
+	call		SHA256_INIT
+
+	lea		rdi,	[rip+SHA_CTX_SCRATCH]
+	lea		rsi,	[rbx+32]		# slot's salt field
+	mov		rdx,	SALT_LEN
+	call		SHA256_UPDATE
+
+	lea		rdi,	[rip+SHA_CTX_SCRATCH]
+	mov		rsi,	r10			# password_ptr
+	mov		rdx,	r11			# password_len
+	call		SHA256_UPDATE
+
+	lea		rdi,	[rip+SHA_CTX_SCRATCH]
+	lea		rsi,	[rbx+48]		# slot's password-hash field
+	call		SHA256_FINAL
 
 	mov		rax,	1
 	ret
@@ -117,8 +151,9 @@ USER_CREATE:
 # 2. USER_FIND(username_ptr=rdi, username_len=rsi, password_ptr=rdx, password_len=rcx)
 #
 # Zero-pads the username into USERNAME_SCRATCH, scans USER_TABLE for a
-# matching username, then hashes the submitted password via SHA256_HASH
-# and compares it against the slot's stored hash.
+# matching username, then hashes salt || submitted password (using the
+# slot's stored salt) via the streaming SHA-256 API and compares it
+# against the slot's stored hash.
 # Returns: rax = 1 (username + password match) OR 0 (no match)
 USER_FIND:
 	cmp		rsi,	USERNAME_MAX_LEN
@@ -176,10 +211,24 @@ USER_FIND:
 .UF_USERNAME_MATCH:
 	pop		r11			# password_len
 	pop		r10			# password_ptr
-	mov		rdi,	r10
-	mov		rsi,	r11
-	lea		rdx,	[rip+PASSWORD_HASH_SCRATCH]
-	call		SHA256_HASH
+
+	# hash slot_salt || submitted password into PASSWORD_HASH_SCRATCH
+	lea		rdi,	[rip+SHA_CTX_SCRATCH]
+	call		SHA256_INIT
+
+	lea		rdi,	[rip+SHA_CTX_SCRATCH]
+	lea		rsi,	[rbx+32]		# slot's salt field
+	mov		rdx,	SALT_LEN
+	call		SHA256_UPDATE
+
+	lea		rdi,	[rip+SHA_CTX_SCRATCH]
+	mov		rsi,	r10			# password_ptr
+	mov		rdx,	r11			# password_len
+	call		SHA256_UPDATE
+
+	lea		rdi,	[rip+SHA_CTX_SCRATCH]
+	lea		rsi,	[rip+PASSWORD_HASH_SCRATCH]
+	call		SHA256_FINAL
 
 	lea		r8,	[rip+PASSWORD_HASH_SCRATCH]
 	xor		r10,	r10
@@ -187,7 +236,7 @@ USER_FIND:
 	cmp		r10,	32
 	je		.UF_YES
 	mov		al,	byte ptr [r8+r10]
-	mov		cl,	byte ptr [rbx+32+r10]
+	mov		cl,	byte ptr [rbx+48+r10]
 	cmp		al,	cl
 	jne		.UF_NO
 	inc		r10

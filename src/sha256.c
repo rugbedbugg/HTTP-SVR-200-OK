@@ -15,6 +15,18 @@ static uint32_t rotr(uint32_t x, uint32_t n) {
 	return (x >> n) | (x << (32 - n));
 }
 
+static void copy_bytes(unsigned char *dst, const unsigned char *src, unsigned long n) {
+	for (unsigned long i = 0; i < n; i++) {
+		dst[i] = src[i];
+	}
+}
+
+static void zero_bytes(unsigned char *dst, unsigned long n) {
+	for (unsigned long i = 0; i < n; i++) {
+		dst[i] = 0;
+	}
+}
+
 static void process_block(uint32_t h[8], const uint8_t block[64]) {
 	uint32_t w[64];
 	uint32_t a, b, c, d, e, f, g, hh, t1, t2;
@@ -49,55 +61,89 @@ static void process_block(uint32_t h[8], const uint8_t block[64]) {
 	h[4] += e; h[5] += f; h[6] += g; h[7] += hh;
 }
 
-/* SHA256_HASH(in=rdi, len=rsi, out=rdx) - one-shot SHA-256 over `len` bytes
- * at `in`, writing the 32-byte digest to `out`. No libc calls. */
-void SHA256_HASH(const unsigned char *in, unsigned long len, unsigned char *out) {
-	uint32_t h[8] = {
-		0x6a09e667,0xbb67ae85,0x3c6ef372,0xa54ff53a,
-		0x510e527f,0x9b05688c,0x1f83d9ab,0x5be0cd19
-	};
-	unsigned long full_blocks = len / 64;
-	unsigned long tail_len = len - full_blocks * 64;
-	uint8_t tail[128];
-	unsigned long pad_len;
-	unsigned long total;
-	uint64_t bit_len = (uint64_t)len * 8;
-	unsigned long i;
+/* Streaming SHA-256 context - lets callers hash salt||password (or any
+ * byte sequence assembled in pieces) without a concat scratch buffer.
+ * All fields are plain data; no libc is involved anywhere. */
+typedef struct {
+	uint32_t h[8];
+	uint64_t total_len;
+	uint8_t buf[64];
+	uint64_t buf_len;
+} sha256_ctx;
+
+/* SHA256_INIT(ctx=rdi) - resets the context to the SHA-256 IV */
+void SHA256_INIT(sha256_ctx *ctx) {
+	ctx->h[0] = 0x6a09e667; ctx->h[1] = 0xbb67ae85;
+	ctx->h[2] = 0x3c6ef372; ctx->h[3] = 0xa54ff53a;
+	ctx->h[4] = 0x510e527f; ctx->h[5] = 0x9b05688c;
+	ctx->h[6] = 0x1f83d9ab; ctx->h[7] = 0x5be0cd19;
+	ctx->total_len = 0;
+	ctx->buf_len = 0;
+}
+
+/* SHA256_UPDATE(ctx=rdi, in=rsi, len=rdx) - feeds `len` more bytes */
+void SHA256_UPDATE(sha256_ctx *ctx, const unsigned char *in, unsigned long len) {
+	unsigned long i = 0;
+
+	ctx->total_len += len;
+
+	/* top up the pending block first, if one is partially filled */
+	if (ctx->buf_len > 0) {
+		while (i < len && ctx->buf_len < 64) {
+			ctx->buf[ctx->buf_len++] = in[i++];
+		}
+		if (ctx->buf_len == 64) {
+			process_block(ctx->h, ctx->buf);
+			ctx->buf_len = 0;
+		}
+	}
+
+	/* consume whole blocks straight from the input */
+	while (len - i >= 64) {
+		process_block(ctx->h, in + i);
+		i += 64;
+	}
+
+	/* stash the remainder */
+	if (i < len) {
+		copy_bytes(ctx->buf + ctx->buf_len, in + i, len - i);
+		ctx->buf_len += len - i;
+	}
+}
+
+/* SHA256_FINAL(ctx=rdi, out=rsi) - appends padding + length, processes the
+ * final block(s), and writes the 32-byte big-endian digest to `out` */
+void SHA256_FINAL(sha256_ctx *ctx, unsigned char *out) {
+	uint64_t bit_len = ctx->total_len * 8;
 	int j;
 
-	for (i = 0; i < full_blocks; i++) {
-		process_block(h, in + i * 64);
-	}
+	ctx->buf[ctx->buf_len++] = 0x80;
 
-	for (j = 0; j < (int)tail_len; j++) {
-		tail[j] = in[full_blocks * 64 + j];
+	if (ctx->buf_len > 56) {
+		zero_bytes(ctx->buf + ctx->buf_len, 64 - ctx->buf_len);
+		process_block(ctx->h, ctx->buf);
+		ctx->buf_len = 0;
 	}
-	tail[tail_len] = 0x80;
+	zero_bytes(ctx->buf + ctx->buf_len, 56 - ctx->buf_len);
 
-	if (tail_len < 56) {
-		pad_len = 56 - tail_len - 1;
-	} else {
-		pad_len = 120 - tail_len - 1;
-	}
-	for (j = 0; j < (int)pad_len; j++) {
-		tail[tail_len + 1 + j] = 0;
-	}
-
-	total = tail_len + 1 + pad_len;
 	for (j = 0; j < 8; j++) {
-		tail[total + j] = (uint8_t)(bit_len >> (56 - j * 8));
+		ctx->buf[56 + j] = (uint8_t)(bit_len >> (56 - j * 8));
 	}
-	total += 8;
+	process_block(ctx->h, ctx->buf);
 
-	process_block(h, tail);
-	if (total > 64) {
-		process_block(h, tail + 64);
+	for (j = 0; j < 8; j++) {
+		out[j * 4]     = (uint8_t)(ctx->h[j] >> 24);
+		out[j * 4 + 1] = (uint8_t)(ctx->h[j] >> 16);
+		out[j * 4 + 2] = (uint8_t)(ctx->h[j] >> 8);
+		out[j * 4 + 3] = (uint8_t)(ctx->h[j]);
 	}
+}
 
-	for (i = 0; i < 8; i++) {
-		out[i * 4]     = (uint8_t)(h[i] >> 24);
-		out[i * 4 + 1] = (uint8_t)(h[i] >> 16);
-		out[i * 4 + 2] = (uint8_t)(h[i] >> 8);
-		out[i * 4 + 3] = (uint8_t)(h[i]);
-	}
+/* SHA256_HASH(in=rdi, len=rsi, out=rdx) - one-shot convenience wrapper
+ * over the streaming API. No libc calls. */
+void SHA256_HASH(const unsigned char *in, unsigned long len, unsigned char *out) {
+	sha256_ctx ctx;
+	SHA256_INIT(&ctx);
+	SHA256_UPDATE(&ctx, in, len);
+	SHA256_FINAL(&ctx, out);
 }
