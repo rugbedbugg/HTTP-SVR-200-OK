@@ -98,16 +98,22 @@ SESSION_FIND:
 	imul		rax,	rax,	SESSION_SLOT_LEN
 	lea		rbx,	[r8+rax]
 
-	xor		r10,	r10
+	xor		r11,	r11			# accumulate XOR of all byte diffs
+	xor		rcx,	rcx
 .SF_CMP:
-	cmp		r10,	32
-	je		.SF_MATCH
-	mov		cl,	byte ptr [rbx+r10]
-	mov		r11b,	byte ptr [rdi+r10]
-	cmp		cl,	r11b
-	jne		.SF_NEXT
-	inc		r10
+	cmp		rcx,	32
+	je		.SF_CMPDONE
+	movzx		eax,	byte ptr [rbx+rcx]
+	movzx		r9d,	byte ptr [rdi+rcx]
+	xor		eax,	r9d
+	or		r11d,	eax
+	inc		rcx
 	jmp		.SF_CMP
+
+.SF_CMPDONE:
+	test		r11,	r11
+	jne		.SF_NEXT
+	jmp		.SF_MATCH
 
 .SF_MATCH:
 	mov		rax,	rbx

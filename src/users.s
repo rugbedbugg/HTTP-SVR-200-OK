@@ -81,16 +81,21 @@ USER_CREATE:
 	je		.UC_FREE
 
 	lea		rdi,	[rip+USERNAME_SCRATCH]
-	xor		r10,	r10
+	xor		r11,	r11			# accumulate XOR of all byte diffs
+	xor		rcx,	rcx
 .UC_CMP:
-	cmp		r10,	32
-	je		.UC_DUPLICATE
-	mov		al,	byte ptr [rbx+r10]
-	mov		cl,	byte ptr [rdi+r10]
-	cmp		al,	cl
-	jne		.UC_NEXT
-	inc		r10
+	cmp		rcx,	32
+	je		.UC_CMPDONE
+	movzx		eax,	byte ptr [rbx+rcx]
+	movzx		edx,	byte ptr [rdi+rcx]
+	xor		eax,	edx
+	or		r11d,	eax
+	inc		rcx
 	jmp		.UC_CMP
+
+.UC_CMPDONE:
+	test		r11,	r11
+	je		.UC_DUPLICATE
 
 .UC_NEXT:
 	inc		r9
@@ -193,16 +198,21 @@ USER_FIND:
 	je		.UF_NOTFOUND		# reached the unused tail: no match exists
 
 	lea		rdi,	[rip+USERNAME_SCRATCH]
-	xor		r10,	r10
+	xor		r11,	r11			# accumulate XOR of all byte diffs
+	xor		rcx,	rcx
 .UF_CMP:
-	cmp		r10,	32
-	je		.UF_USERNAME_MATCH
-	mov		al,	byte ptr [rbx+r10]
-	mov		cl,	byte ptr [rdi+r10]
-	cmp		al,	cl
-	jne		.UF_NEXT
-	inc		r10
+	cmp		rcx,	32
+	je		.UF_CMPDONE
+	movzx		eax,	byte ptr [rbx+rcx]
+	movzx		edx,	byte ptr [rdi+rcx]
+	xor		eax,	edx
+	or		r11d,	eax
+	inc		rcx
 	jmp		.UF_CMP
+
+.UF_CMPDONE:
+	test		r11,	r11
+	je		.UF_USERNAME_MATCH
 
 .UF_NEXT:
 	inc		r9
@@ -231,16 +241,21 @@ USER_FIND:
 	call		SHA256_FINAL
 
 	lea		r8,	[rip+PASSWORD_HASH_SCRATCH]
-	xor		r10,	r10
+	xor		r11,	r11			# accumulate XOR of all byte diffs
+	xor		rcx,	rcx
 .UF_HASHCMP:
-	cmp		r10,	32
-	je		.UF_YES
-	mov		al,	byte ptr [r8+r10]
-	mov		cl,	byte ptr [rbx+48+r10]
-	cmp		al,	cl
-	jne		.UF_NO
-	inc		r10
+	cmp		rcx,	32
+	je		.UF_HASHDONE
+	movzx		eax,	byte ptr [r8+rcx]
+	movzx		r9d,	byte ptr [rbx+48+rcx]
+	xor		eax,	r9d
+	or		r11d,	eax
+	inc		rcx
 	jmp		.UF_HASHCMP
+
+.UF_HASHDONE:
+	test		r11,	r11
+	jne		.UF_NO
 
 .UF_YES:
 	mov		rax,	1
