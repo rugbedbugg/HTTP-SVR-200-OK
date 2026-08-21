@@ -12,15 +12,20 @@
 .global	RESP_REGISTER_OK
 .global	RESP_USERNAME_TAKEN
 .global	RESP_USER_TABLE_FULL
+.global	RESP_FILES_LIST
+.global	RESP_FILES_UNAVAILABLE
 
 .extern	ACCEPT
 .extern	TOKEN_SCRATCH
+.extern	DEC_ENCODE
+.extern	FILELIST_BUF
 
 .section .bss
 #===============================================#
 #	  Dynamic Response Buffer (.bss)	#
 #===============================================#
 	.lcomm	RESP_LOGIN_BUF, 256
+	.lcomm	RESP_FILES_BUF, 128
 
 .section .rodata
 ### HTTP Status Codes
@@ -145,6 +150,27 @@ RESP_503_USERS:
 	.ascii	"\r\n"
 	.ascii	"No accounts available\n"
 RESP_503_USERS_END:
+#==================
+# Dynamic /files response: static prefix + decimal Content-Length + suffix
+RESP_FILES_PREFIX:
+	.ascii	"HTTP/1.1 200 OK\r\n"
+	.ascii	"Content-Type: text/plain\r\n"
+	.ascii	"Content-Length: "
+RESP_FILES_PREFIX_END:
+RESP_FILES_SUFFIX:
+	.ascii	"\r\n"
+	.ascii	"Connection: close\r\n"
+	.ascii	"\r\n"
+RESP_FILES_SUFFIX_END:
+#==================
+# 13. Status 503: Service Unavailable (file store missing)
+RESP_503_FILES:
+	.ascii	"HTTP/1.1 503 Service Unavailable\r\n"
+	.ascii	"Content-Length: 23\r\n"
+	.ascii	"Connection: close\r\n"
+	.ascii	"\r\n"
+	.ascii	"File store unavailable\n"
+RESP_503_FILES_END:
 ###################
 
 .set 	RESP_200_LEN,	RESP_200_END - RESP_200
@@ -163,6 +189,9 @@ RESP_503_USERS_END:
 .set	RESP_201_LEN,		RESP_201_END - RESP_201
 .set	RESP_409_LEN,		RESP_409_END - RESP_409
 .set	RESP_503_USERS_LEN,	RESP_503_USERS_END - RESP_503_USERS
+.set	RESP_FILES_PREFIX_LEN,	RESP_FILES_PREFIX_END - RESP_FILES_PREFIX
+.set	RESP_FILES_SUFFIX_LEN,	RESP_FILES_SUFFIX_END - RESP_FILES_SUFFIX
+.set	RESP_503_FILES_LEN,	RESP_503_FILES_END - RESP_503_FILES
 
 .section .text
 #===============================================#
@@ -253,11 +282,58 @@ RESP_USER_TABLE_FULL:				// What to respond if the user table is full on /regist
 	mov		rdi,	r13
 	lea		rsi,	[rip+RESP_503_USERS]
 	mov		rdx,	RESP_503_USERS_LEN
+	jmp		WRITE
+
+RESP_FILES_UNAVAILABLE:				// What to respond if the file store can't be opened on /files
+	mov		rdi,	r13
+	lea		rsi,	[rip+RESP_503_FILES]
+	mov		rdx,	RESP_503_FILES_LEN
+	jmp		WRITE
+
+RESP_FILES_LIST:				// /files success; rax = listing body length
+	push		rax					# keep body length for the final write
+	push		rax					# DEC_ENCODE value argument
+
+	# assemble header: prefix + decimal body length + suffix
+	lea		rdi,	[rip+RESP_FILES_BUF]
+	lea		rsi,	[rip+RESP_FILES_PREFIX]
+	mov		rcx,	RESP_FILES_PREFIX_LEN
+	cld
+	rep		movsb					# rdi -> digit position
+
+	mov		rsi,	rdi			# DEC_ENCODE(dst=rsi)
+	pop		rdi					# DEC_ENCODE(value=rdi)
+	call		DEC_ENCODE				# rax = digit count
+
+	lea		rdi,	[rip+RESP_FILES_BUF]
+	add		rdi,	RESP_FILES_PREFIX_LEN
+	add		rdi,	rax			# rdi = past the digits
+	lea		rsi,	[rip+RESP_FILES_SUFFIX]
+	mov		rcx,	RESP_FILES_SUFFIX_LEN
+	rep		movsb
+
+	mov		rdx,	rdi
+	lea		rcx,	[rip+RESP_FILES_BUF]
+	sub		rdx,	rcx			# rdx = full header length
+
+	mov		rdi,	r13
+	lea		rsi,	[rip+RESP_FILES_BUF]
+	mov		eax,	1			# sys_write (header)
+	syscall
+
+	mov		rdi,	r13
+	lea		rsi,	[rip+FILELIST_BUF]
+	pop		rdx				# body length
+	mov		eax,	1			# sys_write (body)
+	syscall
+
+	jmp		CLOSE_CLIENT
 
 WRITE:	// write(client_fd, response, response_len)
 	mov 		rax,	1		# sys_write
 	syscall
 
+CLOSE_CLIENT:
 #===============================================#
 #		CLOSE CALL (3)			#
 #===============================================#

@@ -28,6 +28,10 @@
 
 .extern	USER_CREATE
 .extern	USER_FIND
+.extern	FILE_LIST
+
+.extern	RESP_FILES_LIST
+.extern	RESP_FILES_UNAVAILABLE
 
 .extern	REQ_BUF
 .extern	REQ_BYTES
@@ -289,7 +293,29 @@ CHECK_FILES:
 	call		PATH_EQ_SPACE
 	cmp		rax,	1
 	jne		CHECK_LOGOUT
-	jmp		RESP_NOT_IMPLEMENTED
+	cmp		r15,	1
+	jne		RESP_METHOD_NOT_ALLOWED	# /files currently supports GET only
+
+	# /files requires an authenticated session: extract token from Cookie header
+	lea		rdi,	[rip+REQ_BUF]
+	mov		rsi,	r10			# header-end ptr
+	lea		rdx,	[rip+LOGOUT_TOKEN_SCRATCH]	# shared cookie-token scratch
+	call		EXTRACT_COOKIE_TOKEN
+	cmp		rax,	1
+	jne		RESP_UNAUTHORIZED
+
+	# look up the token in the session table
+	lea		rdi,	[rip+LOGOUT_TOKEN_SCRATCH]
+	mov		rsi,	32
+	call		SESSION_FIND
+	cmp		rax,	0
+	je		RESP_UNAUTHORIZED
+
+	# authenticated - build the listing (rax = body length or -1)
+	call		FILE_LIST
+	cmp		rax,	0
+	jl		RESP_FILES_UNAVAILABLE		# ./files_root missing/unopenable
+	jmp		RESP_FILES_LIST
 
 CHECK_LOGOUT:
 	mov		rdi,	r14

@@ -9,6 +9,7 @@
 .global	HEX_ENCODE
 .global	EXTRACT_COOKIE_TOKEN
 .global	FORM_EXTRACT_VALUE
+.global	DEC_ENCODE
 
 .section .rodata
 CONTENT_LENGTH_KEY:	.ascii	"Content-Length:"
@@ -23,6 +24,7 @@ SESSION_KEY:		.ascii	"session="
 #		Request Buffer (.bss)		#
 #===============================================#
 	.lcomm	REQ_BUF, 4096
+	.lcomm	DEC_SCRATCH, 32			# backwards digit buffer for DEC_ENCODE
 
 .section .text
 #===============================================#
@@ -505,4 +507,40 @@ FORM_EXTRACT_VALUE:
 .FEV_NO:
 	xor		rax,	rax
 	xor		rbx,	rbx
+	ret
+
+# 9. DEC_ENCODE(value=rdi, dst=rsi)
+#
+# Writes the unsigned decimal ASCII representation of value at dst
+# (up to 20 digits). Used to build dynamic Content-Length headers.
+# Returns: rax = number of digits written
+DEC_ENCODE:
+	push		rbx
+	mov		rax,	rdi
+	lea		r8,	[rip+DEC_SCRATCH]
+	lea		rcx,	[r8+32]			# fill digits backwards from the end
+.DEC_SPLIT:
+	xor		edx,	edx
+	mov		rbx,	10
+	div		rbx				# rax = quotient, rdx = remainder
+	add		dl,	'0'
+	dec		rcx
+	mov		[rcx],	dl
+	cmp		rax,	0
+	jne		.DEC_SPLIT
+
+	lea		r11,	[r8+32]
+	xor		r9,	r9			# digits copied so far
+.DEC_COPY:
+	cmp		rcx,	r11
+	jae		.DEC_DONE
+	mov		al,	byte ptr [rcx]
+	mov		[rsi+r9], al
+	inc		r9
+	inc		rcx
+	jmp		.DEC_COPY
+
+.DEC_DONE:
+	mov		rax,	r9
+	pop		rbx
 	ret

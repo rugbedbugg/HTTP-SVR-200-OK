@@ -6,3 +6,7 @@
 
 # final binary
 /server
+
+# served file store: keep the dir, ignore its contents
+files_root/*
+!files_root/.keep
