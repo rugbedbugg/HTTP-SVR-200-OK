@@ -71,6 +71,25 @@ SK_ADRa:xor 		rsi,	rsi		# NULL SOCKADDR
 
 
 #===============================================#
+#	  SETSOCKOPT CALL (54)		#
+#===============================================#
+RCV_TIMEOUT:	// setsockopt(client_fd, SOL_SOCKET, SO_RCVTIMEO, &timeval, sizeof(timeval))
+	# caps how long a client can stall while sending the request, so a
+	# slowloris-style connection can't pin the single-threaded loop forever
+	sub		rsp,	16		# struct timeval {tv_sec, tv_usec}
+	mov qword ptr	[rsp],	5		# tv_sec = 5s
+	mov qword ptr	[rsp+8],0		# tv_usec = 0
+	mov		rdi,	r13		# Client socket FD
+	mov		rsi,	1		# SOL_SOCKET
+	mov		rdx,	20		# SO_RCVTIMEO
+	mov		r10,	rsp		# *timeval
+	mov		r8,	16		# sizeof(timeval)
+	mov		rax,	54		# sys_setsockopt
+	syscall
+	add		rsp,	16
+
+
+#===============================================#
 #		READ CALL (0)			#
 #===============================================#
 READ_REQ:	// read(client_fd, REQ_BUF, 4096)
