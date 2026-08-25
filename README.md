@@ -171,6 +171,10 @@ curl -v -H "Cookie: session=<token>" http://localhost:8080/files
 | Port 8080 | Requires no root; change in `server.s` for port 80 |
 | Linux-only | Syscall numbers and ABI are x86-64 Linux specific |
 
+## License
+
+MIT, see [LICENSE](LICENSE).
+
 ## Links
 
 - **Repo:** https://github.com/rugbedbugg/HTTP-SVR-200-OK
