@@ -104,8 +104,8 @@ SESSION_FIND:
 	cmp		rcx,	32
 	je		.SF_CMPDONE
 	movzx		eax,	byte ptr [rbx+rcx]
-	movzx		r9d,	byte ptr [rdi+rcx]
-	xor		eax,	r9d
+	movzx		edx,	byte ptr [rdi+rcx]
+	xor		eax,	edx
 	or		r11d,	eax
 	inc		rcx
 	jmp		.SF_CMP

@@ -46,6 +46,7 @@ request 200 /health
 request 404 /missing
 request 405 /login
 request 401 /files
+request 401 /files -H "Cookie: session=00000000000000000000000000000000"
 request 201 /register --data 'username=smoke&password=secret'
 request 409 /register --data 'username=smoke&password=secret'
 request 401 /login --data 'username=smoke&password=wrong'
