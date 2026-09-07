@@ -1,0 +1,36 @@
+name: CI
+
+on:
+  push:
+    branches: [main, 'ci/**']
+  pull_request:
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: jdx/mise-action@v2
+      - name: Check shell scripts
+        run: mise run lint
+      - name: Build and test HTTP and authentication behavior
+        run: mise run test
+      - name: Record tested binary checksum
+        run: sha256sum server > SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: http-server-linux-x86_64
+          path: |
+            server
+            SHA256SUMS
+          if-no-files-found: error

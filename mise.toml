@@ -1,0 +1,15 @@
+[tools]
+shellcheck = "0.10.0"
+
+[tasks.lint]
+run = "shellcheck build.sh tests/smoke.sh && bash -n build.sh tests/smoke.sh"
+
+[tasks.build]
+run = "bash build.sh server"
+
+[tasks.test]
+depends = ["build"]
+run = "bash tests/smoke.sh"
+
+[tasks.check]
+run = "mise run lint && mise run test"

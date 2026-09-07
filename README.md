@@ -1,10 +1,12 @@
 # HTTP-SVR-200-OK
 
+[![CI](https://github.com/rugbedbugg/HTTP-SVR-200-OK/actions/workflows/ci.yml/badge.svg)](https://github.com/rugbedbugg/HTTP-SVR-200-OK/actions/workflows/ci.yml)
+
 ![GitHub last commit](https://img.shields.io/github/last-commit/rugbedbugg/HTTP-SVR-200-OK?style=for-the-badge&labelColor=000000)
 ![GitHub repo size](https://img.shields.io/github/repo-size/rugbedbugg/HTTP-SVR-200-OK?style=for-the-badge&labelColor=000000)
 ![Stars](https://img.shields.io/github/stars/rugbedbugg/HTTP-SVR-200-OK?style=for-the-badge&labelColor=000000)
 
-A bare-metal x86-64 Linux HTTP/1.1 server written entirely in assembly (NASM syntax via GCC). Implements a single-threaded event loop with `epoll`-style accept/read/close via raw syscalls. Features: GET/POST routing, session-based authentication (SHA-256 salted password hashes, constant-time comparisons), authenticated `/files` directory listing with dynamic `Content-Length`, and 5-second receive timeout to bound slow-client stalls.
+A bare-metal x86-64 Linux HTTP/1.1 server written in assembly with a C SHA-256 helper (GNU assembler Intel syntax via GCC). Implements a single-threaded event loop with sequential accept/read/close via raw syscalls. Features: GET/POST routing, session-based authentication (SHA-256 salted password hashes, constant-time comparisons), authenticated `/files` directory listing with dynamic `Content-Length`, and 5-second receive timeout to bound slow-client stalls.
 
 ## Status
 
@@ -14,11 +16,11 @@ A bare-metal x86-64 Linux HTTP/1.1 server written entirely in assembly (NASM syn
 
 | Feature | Description |
 |---------|-------------|
-| Pure assembly | NASM syntax, GCC-linked, no libc (`-nostdlib -ffreestanding`) |
+| Assembly core | GNU assembler Intel syntax, GCC-linked, no libc (`-nostdlib -ffreestanding`) |
 | Raw syscalls only | `socket`, `bind`, `listen`, `accept`, `read`, `write`, `close`, `setsockopt`, `exit` |
 | Single-threaded | One client at a time, sequential processing |
 | HTTP/1.1 subset | GET, POST, headers, `Content-Length` (no chunked) |
-| Routing | `/`, `/register`, `/login`, `/logout`, `/files` (auth required) |
+| Routing | `/health`, `/register`, `/login`, `/logout`, `/files` (auth required) |
 | Session auth | SHA-256 salted hashes via `getrandom(2)`, 96-byte slots |
 | Timing-safe | Constant-time compare for passwords, usernames, tokens |
 | Slow-client bound | `SO_RCVTIMEO` 5s |
@@ -28,7 +30,7 @@ A bare-metal x86-64 Linux HTTP/1.1 server written entirely in assembly (NASM syn
 
 | Component | Details |
 |-----------|---------|
-| Language | x86-64 Assembly (NASM via `.intel_syntax noprefix`) |
+| Language | x86-64 Assembly (GNU assembler via `.intel_syntax noprefix`) |
 | Toolchain | GCC (assembler + linker) - `-nostdlib -no-pie -ffreestanding` |
 | Syscalls | Linux x86-64 ABI: `socket(41)`, `bind(49)`, `listen(50)`, `accept(43)`, `read(0)`, `write(1)`, `close(3)`, `setsockopt(54)`, `exit(60)`, `getrandom(318)` |
 | Crypto | SHA-256 in C (`sha256.c`) for password hashing |
@@ -44,7 +46,7 @@ A bare-metal x86-64 Linux HTTP/1.1 server written entirely in assembly (NASM syn
 | `responses.s` | HTTP response builders (200, 400, 401, 403, 404, 405, 500) |
 | `helpers.s` | String utils, header parsing (`FIND_HDR_END`, `PARSE_CONTENT_LENGTH`) |
 | `users.s` | User table (fixed 96-byte slots), registration, lookup |
-| `session.s` | Session tokens (random), validation, expiry |
+| `session.s` | Session tokens (random), validation, invalidation |
 | `files.s` | `/files` handler: `opendir`/`readdir` via syscalls, dynamic `Content-Length` |
 | `sha256.c` | SHA-256 implementation (C, called from assembly) |
 
@@ -92,9 +94,9 @@ The server has no CLI flags - it binds to port 8080 and runs forever:
 
 ```bash
 ./http-server &
-curl http://localhost:8080/
-curl -X POST http://localhost:8080/register -d "user=alice&pass=secret"
-curl -X POST http://localhost:8080/login -d "user=alice&pass=secret"
+curl http://localhost:8080/health
+curl -X POST http://localhost:8080/register -d "username=alice&password=secret"
+curl -X POST http://localhost:8080/login -d "username=alice&password=secret"
 curl -H "Cookie: session=<token>" http://localhost:8080/files
 ```
 
@@ -102,8 +104,8 @@ curl -H "Cookie: session=<token>" http://localhost:8080/files
 
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
-| GET | `/` | No | Index page |
-| POST | `/register` | No | Create account (user + pass) |
+| GET | `/health` | No | Health response |
+| POST | `/register` | No | Create account (username + password) |
 | POST | `/login` | No | Start session, returns `Set-Cookie: session=...` |
 | POST | `/logout` | Yes | Invalidate session |
 | GET | `/files` | Yes | Directory listing of `files_root/` with `Content-Length` |
@@ -145,19 +147,20 @@ HTTP-SVR-200-OK/
 
 ## Testing
 
-No automated test suite. Manual verification:
+Install [mise](https://mise.jdx.dev/), then run:
 
 ```bash
-./build.sh http-server
-./http-server &
-# In another terminal:
-curl -v http://localhost:8080/
-curl -v -X POST http://localhost:8080/register -d "user=test&pass=pass123"
-curl -v -X POST http://localhost:8080/login -d "user=test&pass=pass123"
-# Copy session cookie from Set-Cookie header
-curl -v -H "Cookie: session=<token>" http://localhost:8080/files
-# Should list files_root/ contents with Content-Length
+mise trust
+mise install
+mise run check
 ```
+
+The tasks use system GCC/Bash and pinned ShellCheck. `mise run build` builds
+`server`; `mise run test` builds and runs HTTP/authentication smoke tests.
+Tests require curl and a free port 8080, use temporary data, and stop their own
+server afterward. After stopping a server, port 8080 may need about a minute
+to clear before another run because the server does not enable address reuse.
+CI runs the same tasks and uploads the tested binary and checksum.
 
 ## Notes / Gotchas
 
