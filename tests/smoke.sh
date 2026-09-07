@@ -34,6 +34,7 @@ done
 request() {
     local expected=$1 path=$2 actual
     shift 2
+    echo "Checking $path (expected $expected)"
     actual=$(curl --silent --show-error --max-time 3 -D "$fixture/headers"         -o "$fixture/body" -w '%{http_code}' "http://127.0.0.1:8080$path" "$@")
     [[ "$actual" == "$expected" ]] || {
         echo "$path: expected $expected, got $actual" >&2
